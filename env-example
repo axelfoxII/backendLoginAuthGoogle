@@ -1,0 +1,8 @@
+JWT_SECRET=your-super-secret-jwt-key-change-in-production
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+MONGO_URI=
+MONGO_DB=auth_system
+PORT=3000
+NODE_ENV=development
+ALLOWED_ORIGINS=http://localhost:4200,http://localhost:3000
