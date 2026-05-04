@@ -109,8 +109,20 @@ const passwordStrong = check('password')
 // Respuesta (201):
 //   - message: "User registered successfully"
 //   - user: { id, name, email, role, avatar }
+// DEBUG: Agregar middleware simple para ver si llega
 router.post('/register',
-  upload.single('avatar'), // Middleware de multer para subir archivo
+  (req, res, next) => {
+    console.log('=== REGISTRO LLEGÓ ===');
+    console.log('req.body antes de multer:', req.body);
+    next();
+  },
+  upload.single('avatar'),
+  (req, res, next) => {
+    console.log('=== DESPUÉS DE MULTER ===');
+    console.log('req.body después de multer:', req.body);
+    console.log('req.file:', req.file);
+    next();
+  },
   [
     // Validaciones con express-validator
     body('email').isEmail().withMessage('Valid email is required')

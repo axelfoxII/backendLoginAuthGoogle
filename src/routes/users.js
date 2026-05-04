@@ -57,6 +57,64 @@ const upload = multer({
 
 
 // =====================================================
+// =====================================================
+// POST /users - Crear nuevo usuario
+// =====================================================
+// Requiere: autenticación
+// Roles permitidos: solo admin
+// Body (form-data):
+//   - name: string
+//   - email: string
+//   - password: string
+//   - role: optional ('user', 'editor', 'admin')
+//   - image: optional (avatar)
+router.post('/',
+  auth,
+  role('admin'),
+  upload.single('image'),
+  async (req, res) => {
+    try {
+      const { name, email, password, role: newRole } = req.body;
+
+      if (!name || !email || !password) {
+        return res.status(400).json({ message: 'Name, email and password are required' });
+      }
+
+      const existingUser = await User.findOne({ email: email.toLowerCase() });
+      if (existingUser) {
+        return res.status(409).json({ message: 'Email already exists' });
+      }
+
+      let avatarPath = '';
+      if (req.file) {
+        avatarPath = '/uploads/' + req.file.filename;
+      }
+
+      const user = new User({
+        name,
+        email: email.toLowerCase(),
+        password,
+        avatar: avatarPath,
+        role: newRole || 'user',
+        provider: 'local',
+        failedAttempts: 0,
+        locked: false
+      });
+
+      await user.save();
+
+      res.status(201).json({
+        message: 'User created successfully',
+        user: user.toJSON()
+      });
+    } catch (error) {
+      console.error('Create user error:', error);
+      res.status(500).json({ message: 'Server error' });
+    }
+  }
+);
+
+
 // GET /users - Listar todos los usuarios
 // =====================================================
 // Requiere: autenticación
@@ -115,82 +173,85 @@ router.get('/:id', auth, async (req, res) => {
 //   - password: string (opcional, mín 6 chars)
 //   - role: string ('admin', 'editor', 'user') - solo admin puede cambiar rol
 //   - image: file (opcional, para avatar)
-router.patch('/:id',
+
+// =====================================================
+// PATCH /users/:id/avatar - Actualizar avatar de usuario
+// IMPORTANTE: Esta ruta debe estar ANTES de PATCH /:id para evitar conflictos
+// =====================================================
+// Multer sin restricciones de campos para evitar "Unexpected field"
+const uploadAvatar = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      const uploadDir = path.join(__dirname, '../../uploads');
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+      cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+      cb(null, 'avatar-' + uniqueSuffix + path.extname(file.originalname));
+    }
+  })
+  // SIN fileFilter para aceptar cualquier tipo de archivo
+});
+
+// PATCH /users/:id/avatar - Actualizar avatar
+router.patch('/:id/avatar',
   auth,
-  upload.single('image'),
+  uploadAvatar.single('image'),
   async (req, res) => {
+    console.log('=== PATCH /:id/avatar ===');
+    console.log('req.params.id:', req.params.id);
+    console.log('req.body:', req.body);
+    console.log('req.file:', req.file);
+    
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+
     try {
       const { id } = req.params;
-      const { name, email, password, role: newRole } = req.body;
-      
-      // Buscar usuario a actualizar
+      const { oldAvatar } = req.body;
+
       const targetUser = await User.findById(id);
       if (!targetUser) {
         return res.status(404).json({ message: 'User not found' });
       }
-      
-      // Verificar permisos
-      // Admin/Editor pueden editar cualquier usuario
-      // Usuarios normales solo pueden editar su propio perfil
+
       const isAdminOrEditor = req.user.role === 'admin' || req.user.role === 'editor';
       const isOwnProfile = req.user._id.toString() === id;
       
       if (!isAdminOrEditor && !isOwnProfile) {
-        return res.status(403).json({ message: 'Not authorized to update this user' });
+        return res.status(403).json({ message: 'Not authorized' });
       }
-      
-      // Actualizar campos si se proporcionan
-      if (name) targetUser.name = name;
-      if (email) targetUser.email = email.toLowerCase();
-      if (password && password.length >= 6) targetUser.password = password;
-      
-      // Solo el admin puede cambiar el rol de otros usuarios
-      // Un admin no puede cambiar su propio rol
-      if (req.user.role === 'admin' && newRole && !isOwnProfile) {
-        targetUser.role = newRole;
-      }
-      
-      // Si hay nuevo archivo de imagen, actualizar avatar
-      // Solo si el usuario es 'local' (no de Google)
-      if (req.file) {
-        if (targetUser.provider === 'google') {
-          return res.status(403).json({ message: 'Cannot change avatar for Google users' });
-        }
 
-        const avatarPath = '/uploads/' + req.file.filename;
-        
-        // Eliminar avatar anterior si existe
-        if (targetUser.avatar && targetUser.avatar.startsWith('/uploads/')) {
-          const oldAvatarPath = path.join(__dirname, '../../', targetUser.avatar);
-          if (fs.existsSync(oldAvatarPath)) {
-            fs.unlinkSync(oldAvatarPath);
-          }
-        }
-        
-        targetUser.avatar = avatarPath;
+      if (targetUser.provider === 'google') {
+        return res.status(403).json({ message: 'Cannot change avatar for Google users' });
       }
+
+      const avatarPath = '/uploads/' + req.file.filename;
       
-      // Guardar cambios
+      const avatarToDelete = oldAvatar || targetUser.avatar;
+      if (avatarToDelete && avatarToDelete.startsWith('/uploads/')) {
+        const oldAvatarPath = path.join(__dirname, '../../', avatarToDelete);
+        if (fs.existsSync(oldAvatarPath)) {
+          fs.unlinkSync(oldAvatarPath);
+        }
+      }
+
+      targetUser.avatar = avatarPath;
       await targetUser.save();
-      
-      res.json({
-        message: 'User updated successfully',
-        user: targetUser.toJSON()
-      });
+
+      res.json({ message: 'Avatar updated successfully', avatar: avatarPath });
     } catch (error) {
-      console.error('Update user error:', error);
+      console.error('Avatar update error:', error);
       res.status(500).json({ message: 'Server error' });
     }
   }
 );
 
-
-// =====================================================
-// DELETE /users/:id - Eliminar usuario
-// =====================================================
-// Requiere: autenticación
-// Roles permitidos: solo admin
-// 
+//
 // Reglas:
 // - Un admin no puede eliminarse a sí mismo
 // - Se elimina la imagen de perfil asociada
@@ -276,92 +337,4 @@ router.post('/avatar',
 // PATCH /users/:id/avatar - Actualizar avatar de usuario
 // =====================================================
 // Endpoint agregado para permitir cambio de avatar desde el perfil
-//Recibe:
-// - image: archivo de imagen (campo obligatorio)
-// - oldAvatar: ruta de la imagen anterior a eliminar (opcional)
-// Retorna: { message, avatar } con la nueva ruta del avatar
-router.patch('/:id/avatar',
-  auth,
-  upload.single('image'),
-  async (req, res) => {
-    console.log('=== PATCH /:id/avatar DEBUG ===');
-    console.log('req.params.id:', req.params.id);
-    console.log('req.user._id:', req.user._id);
-    console.log('req.user.role:', req.user.role);
-    console.log('req.user.provider:', req.user.provider);
-    console.log('req.file:', req.file);
-    console.log('req.body:', req.body);
-    
-    try {
-      const { id } = req.params;
-      
-      // Verificar que se envió archivo
-      if (!req.file) {
-        console.log('ERROR: No file uploaded');
-        return res.status(400).json({ message: 'No file uploaded' });
-      }
-
-      // Buscar usuario objetivo
-      const targetUser = await User.findById(id);
-      console.log('targetUser:', targetUser ? { 
-        _id: targetUser._id, 
-        name: targetUser.name, 
-        provider: targetUser.provider,
-        avatar: targetUser.avatar 
-      } : 'NOT FOUND');
-      
-      if (!targetUser) {
-        console.log('ERROR: User not found');
-        return res.status(404).json({ message: 'User not found' });
-      }
-
-      // Verificar permisos: solo el propio usuario o admin/editor pueden cambiar el avatar
-      const isAdminOrEditor = req.user.role === 'admin' || req.user.role === 'editor';
-      const isOwnProfile = req.user._id.toString() === id;
-      console.log('isAdminOrEditor:', isAdminOrEditor);
-      console.log('isOwnProfile:', isOwnProfile);
-      
-      if (!isAdminOrEditor && !isOwnProfile) {
-        console.log('ERROR: Not authorized');
-        return res.status(403).json({ message: 'Not authorized' });
-      }
-
-      // CAMBIO: No permitir cambio de avatar para usuarios de Google (su avatar viene de Google)
-      if (targetUser.provider === 'google') {
-        console.log('ERROR: Google user cannot change avatar');
-        return res.status(403).json({ message: 'Cannot change avatar for Google users' });
-      }
-
-      // Obtener oldAvatar del body y construir nueva ruta
-      const { oldAvatar } = req.body;
-      const avatarPath = '/uploads/' + req.file.filename;
-      console.log('New avatar path:', avatarPath);
-      console.log('Old avatar from body:', oldAvatar);
-      
-      // CAMBIO: Eliminar avatar anterior si existe (del body o de la DB)
-      const avatarToDelete = oldAvatar || targetUser.avatar;
-      if (avatarToDelete && avatarToDelete.startsWith('/uploads/')) {
-        const oldAvatarPath = path.join(__dirname, '../../', avatarToDelete);
-        console.log('Deleting old avatar:', oldAvatarPath);
-        if (fs.existsSync(oldAvatarPath)) {
-          fs.unlinkSync(oldAvatarPath);
-        }
-      }
-
-      // Actualizar avatar del usuario
-      targetUser.avatar = avatarPath;
-      await targetUser.save();
-      console.log('SUCCESS: Avatar updated');
-
-      res.json({
-        message: 'Avatar updated successfully',
-        avatar: avatarPath
-      });
-    } catch (error) {
-      console.error('Avatar update error:', error);
-      res.status(500).json({ message: 'Server error' });
-    }
-  }
-);
-
 module.exports = router;
