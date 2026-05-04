@@ -225,27 +225,31 @@ router.post('/login',
         return res.status(423).json({ message: 'Account locked. Try again later.' });
       }
       
-      // Verificar si el usuario se registró con Google
-      if (user.provider === 'google') {
-        return res.status(401).json({ message: 'Please login with Google' });
-      }
-      
-      // Comparar contraseña
-      const isMatch = await user.comparePassword(password);
-      if (!isMatch) {
-        // Incrementar contador de intentos fallidos
-        user.failedAttempts = (user.failedAttempts || 0) + 1;
-        
-        // Si reach 5 intentos, bloquear por 15 minutos
-        if (user.failedAttempts >= 5) {
-          user.locked = true;
-          user.lockedUntil = new Date(Date.now() + 15 * 60 * 1000); // 15 minutos
-          await user.save();
-          return res.status(423).json({ message: 'Account locked for 15 minutes due to too many failed attempts' });
-        }
-        
+      // CAMBIO: Permitir login con password aunque el usuario se haya registrado con Google
+      // Si es usuario de Google y no tiene password, se la establecemos en el primer intento
+      // y cambiamos el provider a 'local' para permitir login futuro con password
+      if (user.provider === 'google' && !user.password) {
+        user.password = password;
+        user.provider = 'local';
         await user.save();
-        return res.status(401).json({ message: 'Invalid credentials' });
+      } else {
+        // Comparar contraseña para usuarios locales (y Google que ya tienen password)
+        const isMatch = await user.comparePassword(password);
+        if (!isMatch) {
+          // Incrementar contador de intentos fallidos
+          user.failedAttempts = (user.failedAttempts || 0) + 1;
+          
+          // Si reach 5 intentos, bloquear por 15 minutos
+          if (user.failedAttempts >= 5) {
+            user.locked = true;
+            user.lockedUntil = new Date(Date.now() + 15 * 60 * 1000);
+            await user.save();
+            return res.status(423).json({ message: 'Account locked for 15 minutes due to too many failed attempts' });
+          }
+          
+          await user.save();
+          return res.status(401).json({ message: 'Invalid credentials' });
+        }
       }
       
       // Login exitoso - reiniciar contadores

@@ -151,7 +151,12 @@ router.patch('/:id',
       }
       
       // Si hay nuevo archivo de imagen, actualizar avatar
+      // Solo si el usuario es 'local' (no de Google)
       if (req.file) {
+        if (targetUser.provider === 'google') {
+          return res.status(403).json({ message: 'Cannot change avatar for Google users' });
+        }
+
         const avatarPath = '/uploads/' + req.file.filename;
         
         // Eliminar avatar anterior si existe
@@ -237,6 +242,11 @@ router.post('/avatar',
         return res.status(400).json({ message: 'No file uploaded' });
       }
 
+      // No permitir cambio de avatar para usuarios de Google
+      if (req.user.provider === 'google') {
+        return res.status(403).json({ message: 'Cannot change avatar for Google users' });
+      }
+
       const avatarPath = '/uploads/' + req.file.filename;
       
       // Eliminar avatar anterior si existe
@@ -256,6 +266,99 @@ router.post('/avatar',
       });
     } catch (error) {
       console.error('Avatar upload error:', error);
+      res.status(500).json({ message: 'Server error' });
+    }
+  }
+);
+
+
+// =====================================================
+// PATCH /users/:id/avatar - Actualizar avatar de usuario
+// =====================================================
+// Endpoint agregado para permitir cambio de avatar desde el perfil
+//Recibe:
+// - image: archivo de imagen (campo obligatorio)
+// - oldAvatar: ruta de la imagen anterior a eliminar (opcional)
+// Retorna: { message, avatar } con la nueva ruta del avatar
+router.patch('/:id/avatar',
+  auth,
+  upload.single('image'),
+  async (req, res) => {
+    console.log('=== PATCH /:id/avatar DEBUG ===');
+    console.log('req.params.id:', req.params.id);
+    console.log('req.user._id:', req.user._id);
+    console.log('req.user.role:', req.user.role);
+    console.log('req.user.provider:', req.user.provider);
+    console.log('req.file:', req.file);
+    console.log('req.body:', req.body);
+    
+    try {
+      const { id } = req.params;
+      
+      // Verificar que se envió archivo
+      if (!req.file) {
+        console.log('ERROR: No file uploaded');
+        return res.status(400).json({ message: 'No file uploaded' });
+      }
+
+      // Buscar usuario objetivo
+      const targetUser = await User.findById(id);
+      console.log('targetUser:', targetUser ? { 
+        _id: targetUser._id, 
+        name: targetUser.name, 
+        provider: targetUser.provider,
+        avatar: targetUser.avatar 
+      } : 'NOT FOUND');
+      
+      if (!targetUser) {
+        console.log('ERROR: User not found');
+        return res.status(404).json({ message: 'User not found' });
+      }
+
+      // Verificar permisos: solo el propio usuario o admin/editor pueden cambiar el avatar
+      const isAdminOrEditor = req.user.role === 'admin' || req.user.role === 'editor';
+      const isOwnProfile = req.user._id.toString() === id;
+      console.log('isAdminOrEditor:', isAdminOrEditor);
+      console.log('isOwnProfile:', isOwnProfile);
+      
+      if (!isAdminOrEditor && !isOwnProfile) {
+        console.log('ERROR: Not authorized');
+        return res.status(403).json({ message: 'Not authorized' });
+      }
+
+      // CAMBIO: No permitir cambio de avatar para usuarios de Google (su avatar viene de Google)
+      if (targetUser.provider === 'google') {
+        console.log('ERROR: Google user cannot change avatar');
+        return res.status(403).json({ message: 'Cannot change avatar for Google users' });
+      }
+
+      // Obtener oldAvatar del body y construir nueva ruta
+      const { oldAvatar } = req.body;
+      const avatarPath = '/uploads/' + req.file.filename;
+      console.log('New avatar path:', avatarPath);
+      console.log('Old avatar from body:', oldAvatar);
+      
+      // CAMBIO: Eliminar avatar anterior si existe (del body o de la DB)
+      const avatarToDelete = oldAvatar || targetUser.avatar;
+      if (avatarToDelete && avatarToDelete.startsWith('/uploads/')) {
+        const oldAvatarPath = path.join(__dirname, '../../', avatarToDelete);
+        console.log('Deleting old avatar:', oldAvatarPath);
+        if (fs.existsSync(oldAvatarPath)) {
+          fs.unlinkSync(oldAvatarPath);
+        }
+      }
+
+      // Actualizar avatar del usuario
+      targetUser.avatar = avatarPath;
+      await targetUser.save();
+      console.log('SUCCESS: Avatar updated');
+
+      res.json({
+        message: 'Avatar updated successfully',
+        avatar: avatarPath
+      });
+    } catch (error) {
+      console.error('Avatar update error:', error);
       res.status(500).json({ message: 'Server error' });
     }
   }

@@ -43,12 +43,13 @@ app.use(helmet({
 // Permite que el frontend (puerto 4200) haga solicitudes al backend (puerto 3000)
 // Access-Control-Allow-Origin: * - Permite cualquier dominio
 // Access-Control-Allow-Headers: * - Permite cualquier header en las peticiones
-// Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS - Métodos permitidos
+// Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS - Métodos permitidos
+// CAMBIO: Agregado PATCH para permitir el endpoint PATCH /api/users/:id/avatar
 // El método OPTIONS se usa en preflight requests (CORS)
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204); // Responder preflight inmediatamente
   }
@@ -92,8 +93,19 @@ app.use('/api', generalLimiter); // Rate limit general para /api
 // Serve archivos de la carpeta 'uploads' públicamente
 // localhost:3000/uploads/archivo.jpg para acceder a imágenes
 // express.static() sirve archivos sin necesidad de ruta específica
-app.use('/uploads', express.static('uploads'));
-app.use('/avatars', express.static('uploads')); // Alias para /uploads
+// Agregamos headers para permitir CORS en imágenes
+app.use('/uploads', express.static('uploads', {
+  setHeaders: (res) => {
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+}));
+app.use('/avatars', express.static('uploads', {
+  setHeaders: (res) => {
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+}));
 
 // =====================================================
 // RUTAS DE LA API
